@@ -1,0 +1,17 @@
+assets:
+  guardian_idle:
+    status: active
+    type: character_animation
+    reference: art/references/guardian/canonical.png
+    source: art/generated/source/guardian_idle.png
+    frames: 4
+    facing: front
+    runtime_cell: [64, 64]
+    nominal_character_height: 48
+    anchor: bottom-center
+    transparent: true
+    notes:
+      - subtle breathing/bobbing
+      - calm neutral expression
+      - tiny natural motion in leaves, antlers, cloak, or staff
+      - seamless loop feel
