@@ -1,4 +1,4 @@
-.PHONY: sprite build-guardian-masks build-guardian-underlay prepare-runtime-master test
+.PHONY: sprite build-guardian-masks build-guardian-underlay prepare-runtime-master prepare-wisp-size-comparison test
 
 ASSET ?= guardian_idle
 
@@ -13,6 +13,9 @@ build-guardian-underlay:
 
 prepare-runtime-master:
 	python scripts/prepare_runtime_candidate.py $(ASSET)
+
+prepare-wisp-size-comparison:
+	python scripts/prepare_wisp_size_comparison.py
 
 test:
 	python -m unittest discover -s tests -v

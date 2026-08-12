@@ -1,0 +1,93 @@
+{
+  "status": "review_only_not_approved",
+  "presentation_reference": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\references\\wisp\\wisp_front_canonical.png",
+  "guardian_runtime_master": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\source\\guardian_front_runtime_approved.png",
+  "candidates": [
+    {
+      "nominal_visual_height": 12,
+      "runtime_cell": [
+        16,
+        16
+      ],
+      "visible_bounds": [
+        3,
+        4,
+        13,
+        16
+      ],
+      "visual_height": 12,
+      "visual_width": 10,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "fractional_alpha_pixels": 54,
+      "visible_color_count": 84,
+      "occupancy_percent": 32.81,
+      "eyes_distinct": false,
+      "leaf_fins_distinct": true,
+      "flame_silhouette_readable": false,
+      "automated_readability": false,
+      "output": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\review\\wisp\\wisp_12px_review.png",
+      "preview": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\review\\wisp\\wisp_12px_review_8x.png"
+    },
+    {
+      "nominal_visual_height": 16,
+      "runtime_cell": [
+        24,
+        24
+      ],
+      "visible_bounds": [
+        5,
+        8,
+        18,
+        24
+      ],
+      "visual_height": 16,
+      "visual_width": 13,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "fractional_alpha_pixels": 75,
+      "visible_color_count": 132,
+      "occupancy_percent": 22.92,
+      "eyes_distinct": false,
+      "leaf_fins_distinct": true,
+      "flame_silhouette_readable": false,
+      "automated_readability": false,
+      "output": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\review\\wisp\\wisp_16px_review.png",
+      "preview": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\review\\wisp\\wisp_16px_review_8x.png"
+    },
+    {
+      "nominal_visual_height": 20,
+      "runtime_cell": [
+        24,
+        24
+      ],
+      "visible_bounds": [
+        3,
+        4,
+        20,
+        24
+      ],
+      "visual_height": 20,
+      "visual_width": 17,
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "fractional_alpha_pixels": 106,
+      "visible_color_count": 204,
+      "occupancy_percent": 35.94,
+      "eyes_distinct": true,
+      "leaf_fins_distinct": true,
+      "flame_silhouette_readable": true,
+      "automated_readability": true,
+      "output": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\review\\wisp\\wisp_20px_review.png",
+      "preview": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\review\\wisp\\wisp_20px_review_8x.png"
+    }
+  ],
+  "comparison": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\review\\wisp\\wisp_size_comparison.png",
+  "gameplay_scale_comparison": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\review\\wisp\\wisp_guardian_gameplay_scale_comparison.png"
+}

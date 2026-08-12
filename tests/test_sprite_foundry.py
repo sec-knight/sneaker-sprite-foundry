@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from PIL import Image, ImageDraw
 import sprite_foundry as foundry
 import prepare_runtime_candidate as candidate_prep
+import prepare_wisp_size_comparison as wisp_comparison
 
 
 class SpriteFoundryTests(unittest.TestCase):
@@ -198,6 +199,23 @@ class SpriteFoundryTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(foundry.FoundryError, "must never equal"):
                 candidate_prep.run("guardian_idle", root)
+
+    def test_wisp_metrics_report_geometry_and_diagnostic_readability(self):
+        source = Image.new("RGBA", (80, 100), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(source)
+        draw.polygon(((30, 0), (48, 32), (42, 75), (35, 99), (28, 70), (24, 35)), fill=(40, 180, 50, 255))
+        draw.ellipse((27, 45, 45, 73), fill=(255, 245, 205, 255))
+        draw.ellipse((31, 54, 33, 59), fill=(25, 20, 15, 255))
+        draw.ellipse((39, 54, 41, 59), fill=(25, 20, 15, 255))
+        draw.polygon(((23, 50), (4, 42), (20, 64)), fill=(45, 170, 55, 255))
+        draw.polygon(((48, 50), (68, 42), (52, 64)), fill=(45, 170, 55, 255))
+        with tempfile.TemporaryDirectory() as directory:
+            metrics = wisp_comparison.prepare_one(source, 20, (24, 24), Path(directory))
+            self.assertEqual((24, 24), metrics.runtime_cell)
+            self.assertEqual(20, metrics.visual_height)
+            self.assertGreater(metrics.occupancy_percent, 0)
+            self.assertTrue(Path(metrics.output).exists())
+            self.assertTrue(Path(metrics.preview).exists())
 
     def test_manifest_distinguishes_presentation_reference_from_runtime_master(self):
         with tempfile.TemporaryDirectory() as directory:
