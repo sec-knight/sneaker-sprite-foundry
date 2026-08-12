@@ -3,11 +3,24 @@ assets:
     status: active
     type: character_animation
     presentation_reference: art/generated/source/guardian_canonical_front.png
-    runtime_master: art/generated/source/guardian_front_runtime.png
-    source_mode: runtime_master_derived
+    runtime_candidate: art/generated/source/guardian_front_runtime.png
+    runtime_master: art/generated/source/guardian_front_runtime_approved.png
+    runtime_master_sha256: 019d27c2747e58df9c4495908b58da2d17c656808a7297d643f12d29370f65a0
+    source_mode: runtime_master_region_derived
     motion:
-      type: rigid_translation
-      offsets_y: [0, -1, 0, 0]
+      type: masked_rigid_translation
+      regions:
+        body: art/masks/guardian/body.png
+        left_antler_foliage: art/masks/guardian/left_antler_foliage.png
+        right_antler_foliage: art/masks/guardian/right_antler_foliage.png
+        cloak_hem: art/masks/guardian/cloak_hem.png
+      frames:
+        - {}
+        - body: [0, -1]
+          left_antler_foliage: [-1, 0]
+          right_antler_foliage: [1, 0]
+        - {}
+        - cloak_hem: [0, 1]
     frames: 4
     facing: front
     runtime_cell: [64, 64]

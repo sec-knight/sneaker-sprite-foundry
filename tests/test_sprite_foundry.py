@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import hashlib
 from pathlib import Path
 
 import sys
@@ -7,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from PIL import Image, ImageDraw
 import sprite_foundry as foundry
+import prepare_runtime_candidate as candidate_prep
 
 
 class SpriteFoundryTests(unittest.TestCase):
@@ -86,6 +88,82 @@ class SpriteFoundryTests(unittest.TestCase):
         self.assertTrue(foundry.validate(cells, foundry.make_sheet(cells, spec), spec).passed)
         with self.assertRaisesRegex(foundry.FoundryError, "transparent"):
             foundry.derive_runtime_master_frames(Image.new("RGBA", (64, 64), (1, 2, 3, 255)), spec)
+
+    def test_region_derived_frames_move_only_masked_pixels_without_new_colours(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            master_path = root / "master.png"
+            master = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(master)
+            draw.rectangle((20, 10, 43, 43), fill=(30, 100, 60, 255))
+            draw.rectangle((20, 44, 43, 63), fill=(120, 70, 30, 255))
+            master.save(master_path)
+            body_mask = Image.new("L", (64, 64))
+            ImageDraw.Draw(body_mask).rectangle((20, 10, 43, 43), fill=255)
+            mask_path = root / "body.png"
+            body_mask.save(mask_path)
+            spec = foundry.SpriteSpec(
+                "guardian_idle", master_path, 4, 64, 64, 60, "bottom-center",
+                "runtime_master_region_derived", (), None, None, master_path,
+                hashlib.sha256(master_path.read_bytes()).hexdigest(), (("body", mask_path),),
+                ((), (("body", (0, -1)),), (), ()),
+            )
+            cells, warnings = foundry.derive_runtime_master_region_frames(master, spec, master_path)
+            self.assertFalse(warnings)
+            self.assertEqual(master.tobytes(), cells[0].tobytes())
+            self.assertEqual((30, 100, 60, 255), cells[1].getpixel((20, 9)))
+            self.assertEqual((0, 0, 0, 0), cells[1].getpixel((20, 43)))
+            self.assertEqual((120, 70, 30, 255), cells[1].getpixel((20, 44)))
+            self.assertTrue(set(cells[1].get_flattened_data()) <= set(master.get_flattened_data()))
+
+    def test_region_derived_rejects_checksum_or_nonbinary_mask(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            master_path = root / "master.png"
+            master = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            ImageDraw.Draw(master).rectangle((20, 10, 43, 63), fill=(30, 100, 60, 255))
+            master.save(master_path)
+            mask_path = root / "mask.png"
+            Image.new("L", (64, 64), 127).save(mask_path)
+            spec = foundry.SpriteSpec(
+                "guardian_idle", master_path, 4, 64, 64, 60, "bottom-center",
+                "runtime_master_region_derived", (), None, None, master_path, "not-a-hash",
+                (("body", mask_path),), ((), (), (), ()),
+            )
+            with self.assertRaisesRegex(foundry.FoundryError, "checksum"):
+                foundry.derive_runtime_master_region_frames(master, spec, master_path)
+            spec = foundry.SpriteSpec(
+                "guardian_idle", master_path, 4, 64, 64, 60, "bottom-center",
+                "runtime_master_region_derived", (), None, None, master_path,
+                hashlib.sha256(master_path.read_bytes()).hexdigest(), (("body", mask_path),), ((), (), (), ()),
+            )
+            with self.assertRaisesRegex(foundry.FoundryError, "binary"):
+                foundry.derive_runtime_master_region_frames(master, spec, master_path)
+
+    def test_runtime_candidate_preparation_is_review_only_and_bottom_centered(self):
+        candidate = Image.new("RGBA", (160, 240), (4, 3, 1, 0))
+        draw = ImageDraw.Draw(candidate)
+        draw.rectangle((45, 20, 114, 219), fill=(30, 100, 60, 253))
+        cell, report = candidate_prep.prepare_runtime_candidate(candidate, (64, 64), 60)
+        self.assertEqual((64, 64), cell.size)
+        self.assertEqual((21, 4, 42, 64), foundry.alpha_bbox(cell))
+        self.assertEqual(60, report.visual_height)
+        self.assertEqual((0, 255), report.output_alpha_extrema)
+        self.assertTrue(report.touches_cell_boundary)  # Bottom anchor is expected to touch.
+
+    def test_runtime_candidate_review_output_cannot_be_approved_master_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "art/manifests").mkdir(parents=True)
+            (root / "art/generated/source").mkdir(parents=True)
+            candidate = root / "art/generated/source/guardian_front_runtime.png"
+            Image.new("RGBA", (64, 64), (1, 2, 3, 253)).save(candidate)
+            (root / "art/manifests/sprites.yaml").write_text(
+                "assets:\n  guardian_idle:\n    runtime_candidate: art/generated/source/guardian_front_runtime.png\n    runtime_master: art/generated/review/guardian_runtime.png\n    source_mode: runtime_master_derived\n    frames: 4\n    runtime_cell: [64, 64]\n    nominal_character_height: 60\n    anchor: bottom-center\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(foundry.FoundryError, "must never equal"):
+                candidate_prep.run("guardian_idle", root)
 
     def test_manifest_distinguishes_presentation_reference_from_runtime_master(self):
         with tempfile.TemporaryDirectory() as directory:

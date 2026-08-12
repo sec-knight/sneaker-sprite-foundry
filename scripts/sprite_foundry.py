@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from collections import deque
 from dataclasses import dataclass
@@ -33,7 +34,11 @@ class SpriteSpec:
     source_mode: str = "strip"
     motion_offsets: tuple[int, ...] = (0, -1, 0, 0)
     presentation_reference: Path | None = None
+    runtime_candidate: Path | None = None
     runtime_master: Path | None = None
+    runtime_master_sha256: str | None = None
+    region_masks: tuple[tuple[str, Path], ...] = ()
+    region_frames: tuple[tuple[tuple[str, tuple[int, int]], ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -52,12 +57,16 @@ def load_spec(manifest_path: Path, asset_name: str, root: Path = ROOT) -> Sprite
     if asset.get("anchor") != "bottom-center":
         raise FoundryError("This foundry slice requires a bottom-center anchor.")
     source_mode = asset.get("source_mode", "strip")
-    if source_mode not in {"strip", "canonical_derived", "runtime_master_derived"}:
+    if source_mode not in {"strip", "canonical_derived", "runtime_master_derived", "runtime_master_region_derived"}:
         raise FoundryError(f"Unsupported source mode: {source_mode}.")
     runtime_master = root / asset["runtime_master"] if asset.get("runtime_master") else None
+    runtime_candidate = root / asset["runtime_candidate"] if asset.get("runtime_candidate") else None
     presentation_reference = root / asset["presentation_reference"] if asset.get("presentation_reference") else None
-    if source_mode == "runtime_master_derived" and runtime_master is None:
-        raise FoundryError("runtime_master_derived assets must declare runtime_master.")
+    if source_mode in {"runtime_master_derived", "runtime_master_region_derived"} and runtime_master is None:
+        raise FoundryError(f"{source_mode} assets must declare runtime_master.")
+    motion = asset.get("motion", {})
+    regions = tuple((name, root / path) for name, path in motion.get("regions", {}).items())
+    region_frames = tuple(tuple((name, tuple(offset)) for name, offset in frame.items()) for frame in motion.get("frames", ()))
     return SpriteSpec(
         name=asset_name,
         source=runtime_master if runtime_master is not None else root / asset["source"],
@@ -67,9 +76,13 @@ def load_spec(manifest_path: Path, asset_name: str, root: Path = ROOT) -> Sprite
         nominal_height=int(asset["nominal_character_height"]),
         anchor=asset["anchor"],
         source_mode=source_mode,
-        motion_offsets=tuple(int(offset) for offset in asset.get("motion", {}).get("offsets_y", (0,) * int(asset["frames"]))),
+        motion_offsets=tuple(int(offset) for offset in motion.get("offsets_y", (0,) * int(asset["frames"]))),
         presentation_reference=presentation_reference,
+        runtime_candidate=runtime_candidate,
         runtime_master=runtime_master,
+        runtime_master_sha256=asset.get("runtime_master_sha256"),
+        region_masks=regions,
+        region_frames=region_frames,
     )
 
 
@@ -341,6 +354,95 @@ def derive_runtime_master_frames(source: Image.Image, spec: SpriteSpec) -> list[
     return [_translate_cell(master, offset, spec) for offset in spec.motion_offsets]
 
 
+def _load_binary_mask(path: Path, spec: SpriteSpec, master: Image.Image) -> Image.Image:
+    if not path.exists():
+        raise FoundryError(f"Region mask is missing: {path}.")
+    with Image.open(path) as source:
+        mask = source.convert("L")
+    if mask.size != (spec.cell_width, spec.cell_height):
+        raise FoundryError(f"Region mask {path} is {mask.size}, expected {(spec.cell_width, spec.cell_height)}.")
+    values = set(mask.get_flattened_data())
+    if not values <= {0, 255}:
+        raise FoundryError(f"Region mask {path} must be binary (0 or 255).")
+    if mask.getbbox() is None:
+        raise FoundryError(f"Region mask {path} is empty.")
+    master_alpha = master.getchannel("A")
+    if any(value and alpha == 0 for value, alpha in zip(mask.get_flattened_data(), master_alpha.get_flattened_data(), strict=True)):
+        raise FoundryError(f"Region mask {path} selects transparent master pixels.")
+    return mask
+
+
+def _clear_mask(image: Image.Image, mask: Image.Image) -> None:
+    data = bytearray(image.convert("RGBA").tobytes())
+    transparent = next((tuple(data[index:index + 4]) for index in range(0, len(data), 4) if data[index + 3] == 0),
+                       (0, 0, 0, 0))
+    for index, selected in enumerate(mask.get_flattened_data()):
+        if selected:
+            start = index * 4
+            data[start:start + 4] = bytes(transparent)
+    image.paste(Image.frombytes("RGBA", image.size, bytes(data)))
+
+
+def _blit_masked_region(destination: Image.Image, master: Image.Image, mask: Image.Image,
+                         offset_x: int, offset_y: int) -> None:
+    """Copy selected master RGBA pixels directly, with no alpha blending or colour changes."""
+    source_data = master.convert("RGBA").tobytes()
+    destination_data = bytearray(destination.convert("RGBA").tobytes())
+    for index, selected in enumerate(mask.get_flattened_data()):
+        if not selected:
+            continue
+        x, y = index % destination.width, index // destination.width
+        target_x, target_y = x + offset_x, y + offset_y
+        if 0 <= target_x < destination.width and 0 <= target_y < destination.height:
+            source_start = index * 4
+            target_start = (target_y * destination.width + target_x) * 4
+            destination_data[target_start:target_start + 4] = source_data[source_start:source_start + 4]
+    destination.paste(Image.frombytes("RGBA", destination.size, bytes(destination_data)))
+
+
+def derive_runtime_master_region_frames(source: Image.Image, spec: SpriteSpec, master_path: Path) -> tuple[list[Image.Image], tuple[str, ...]]:
+    """Move reviewed master regions by integer pixels; compositing follows manifest region order."""
+    if source.size != (spec.cell_width, spec.cell_height):
+        raise FoundryError(f"Runtime master must already be {(spec.cell_width, spec.cell_height)}, got {source.size}.")
+    if spec.runtime_master_sha256 is None:
+        raise FoundryError("runtime_master_region_derived assets must declare runtime_master_sha256.")
+    actual_checksum = hashlib.sha256(master_path.read_bytes()).hexdigest()
+    if actual_checksum != spec.runtime_master_sha256.lower():
+        raise FoundryError("Approved runtime-master checksum does not match the manifest.")
+    master = source.convert("RGBA")
+    if master.getchannel("A").getextrema()[0] != 0:
+        raise FoundryError("Runtime master must include real transparent background pixels.")
+    if len(spec.region_frames) != spec.frames:
+        raise FoundryError("Region animation must declare one transform map per frame.")
+    masks = {name: _load_binary_mask(path, spec, master) for name, path in spec.region_masks}
+    if not masks:
+        raise FoundryError("Region animation must declare at least one mask.")
+    warnings: list[str] = []
+    for left_name, left_mask in masks.items():
+        for right_name, right_mask in masks.items():
+            if left_name < right_name and any(a and b for a, b in zip(left_mask.get_flattened_data(), right_mask.get_flattened_data(), strict=True)):
+                warnings.append(f"masks '{left_name}' and '{right_name}' overlap; manifest order wins when both move")
+    frames: list[Image.Image] = []
+    for frame_index, transforms in enumerate(spec.region_frames, start=1):
+        if frame_index == 1 and transforms:
+            raise FoundryError("Frame 1 of a region animation must be neutral.")
+        selected: list[tuple[str, tuple[int, int]]] = []
+        for name, offset in transforms:
+            if name not in masks:
+                raise FoundryError(f"Frame {frame_index} references unknown region '{name}'.")
+            if len(offset) != 2 or not all(isinstance(value, int) for value in offset):
+                raise FoundryError("Region transforms must be [integer_x, integer_y].")
+            if offset != (0, 0):
+                selected.append((name, offset))
+        frame = master.copy()
+        for name, _ in selected:
+            _clear_mask(frame, masks[name])
+        for name, (offset_x, offset_y) in selected:
+            _blit_masked_region(frame, master, masks[name], offset_x, offset_y)
+        frames.append(frame)
+    return frames, tuple(warnings)
+
+
 def make_sheet(cells: list[Image.Image], spec: SpriteSpec) -> Image.Image:
     sheet = Image.new("RGBA", (spec.cell_width * spec.frames, spec.cell_height), (0, 0, 0, 0))
     for index, cell in enumerate(cells):
@@ -415,6 +517,9 @@ def run(asset_name: str, root: Path = ROOT) -> ValidationReport:
         elif spec.source_mode == "runtime_master_derived":
             cells = derive_runtime_master_frames(source_file, spec)
             prepared = None
+        elif spec.source_mode == "runtime_master_region_derived":
+            cells, warnings = derive_runtime_master_region_frames(source_file, spec, spec.source)
+            prepared = None
         else:
             frames = extract_frames(source_file, spec.frames)
             cells = normalize_frames(frames, spec)
@@ -432,6 +537,8 @@ def run(asset_name: str, root: Path = ROOT) -> ValidationReport:
         prepared.save(derived)
     make_preview(cells, spec, root / "art/generated/previews" / f"{spec.name}_preview.png",
                  root / "art/generated/previews" / f"{spec.name}.gif")
+    if spec.source_mode == "runtime_master_region_derived" and warnings:
+        print("WARNING: " + "; ".join(warnings))
     return report
 
 

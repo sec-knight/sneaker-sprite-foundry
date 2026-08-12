@@ -1,0 +1,36 @@
+{
+  "input_dimensions": [
+    1024,
+    1536
+  ],
+  "isolated_bounds": [
+    17,
+    50,
+    1010,
+    1377
+  ],
+  "output_dimensions": [
+    64,
+    64
+  ],
+  "output_visual_bounds": [
+    9,
+    4,
+    54,
+    64
+  ],
+  "visual_height": 60,
+  "input_alpha_extrema": [
+    0,
+    254
+  ],
+  "output_alpha_extrema": [
+    0,
+    255
+  ],
+  "input_color_count": 256014,
+  "output_color_count": 1703,
+  "touches_cell_boundary": true,
+  "output": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\review\\guardian_runtime.png",
+  "preview": "C:\\Users\\patri\\Documents\\GitHub\\sneaker-sprite-foundry\\art\\generated\\review\\guardian_runtime_preview.png"
+}
