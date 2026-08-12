@@ -1,4 +1,41 @@
 assets:
+  forest_wisp:
+    status: approved_runtime_master
+    type: creature
+    facing: front
+    presentation_reference: art/references/wisp/wisp_front_canonical.png
+    runtime_master: art/generated/source/wisp_front_runtime_approved.png
+    runtime_master_sha256: c1c7332fd2344ef689e928ff35d325658af25082fe3a33d85da2087401ffd422
+    runtime_cell: [24, 24]
+    nominal_character_height: 20
+    anchor: bottom-center
+    transparent: true
+    notes:
+      - Forest Wisp Runtime Master v1; promoted byte-for-byte from approved 20px review candidate.
+      - presentation reference remains the identity authority; approved runtime master is the runtime authority.
+      - no Wisp animation is approved yet.
+  wisp_hover:
+    status: awaiting_reviewed_runtime_frames
+    type: creature_animation
+    presentation_reference: art/references/wisp/wisp_front_canonical.png
+    runtime_master: art/generated/source/wisp_front_runtime_approved.png
+    runtime_master_sha256: c1c7332fd2344ef689e928ff35d325658af25082fe3a33d85da2087401ffd422
+    source_mode: runtime_frame_strip
+    runtime_frames:
+      - art/generated/source/wisp_front_runtime_approved.png
+      - art/generated/review/wisp/wisp_hover_stretch.png
+      - art/generated/source/wisp_front_runtime_approved.png
+      - art/generated/review/wisp/wisp_hover_tilt.png
+    frames: 4
+    facing: front
+    runtime_cell: [24, 24]
+    nominal_character_height: 20
+    anchor: bottom-center
+    transparent: true
+    notes:
+      - Frame 1 and frame 3 must remain byte-identical to Forest Wisp Runtime Master v1.
+      - Frames 2 and 4 are independently authored, human-reviewed creative runtime inputs.
+      - No animation output may be packed until both review inputs exist.
   guardian_idle:
     status: active
     type: character_animation

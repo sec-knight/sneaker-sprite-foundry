@@ -7,6 +7,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from PIL import Image, ImageDraw
+import yaml
 import sprite_foundry as foundry
 import prepare_runtime_candidate as candidate_prep
 import prepare_wisp_size_comparison as wisp_comparison
@@ -216,6 +217,85 @@ class SpriteFoundryTests(unittest.TestCase):
             self.assertGreater(metrics.occupancy_percent, 0)
             self.assertTrue(Path(metrics.output).exists())
             self.assertTrue(Path(metrics.preview).exists())
+
+    def test_approved_wisp_master_is_the_approved_review_candidate_byte_for_byte(self):
+        root = Path(__file__).resolve().parents[1]
+        candidate = root / "art/generated/review/wisp/wisp_20px_review.png"
+        master = root / "art/generated/source/wisp_front_runtime_approved.png"
+        checksum = (root / "art/generated/source/wisp_front_runtime_approved.sha256").read_text(encoding="utf-8").split()[0]
+        self.assertEqual(candidate.read_bytes(), master.read_bytes())
+        self.assertEqual("c1c7332fd2344ef689e928ff35d325658af25082fe3a33d85da2087401ffd422", checksum)
+        self.assertEqual(checksum, hashlib.sha256(master.read_bytes()).hexdigest())
+
+    def test_wisp_spec_records_identity_runtime_authorities_and_awaiting_hover(self):
+        root = Path(__file__).resolve().parents[1]
+        manifest = yaml.safe_load((root / "art/manifests/sprites.yaml").read_text(encoding="utf-8"))
+        wisp = manifest["assets"]["forest_wisp"]
+        self.assertEqual("art/references/wisp/wisp_front_canonical.png", wisp["presentation_reference"])
+        self.assertEqual("art/generated/source/wisp_front_runtime_approved.png", wisp["runtime_master"])
+        self.assertEqual([24, 24], wisp["runtime_cell"])
+        self.assertEqual(20, wisp["nominal_character_height"])
+        hover = manifest["assets"]["wisp_hover"]
+        self.assertEqual("runtime_frame_strip", hover["source_mode"])
+        self.assertEqual("awaiting_reviewed_runtime_frames", hover["status"])
+        self.assertEqual(wisp["runtime_master"], hover["runtime_frames"][0])
+        self.assertEqual(wisp["runtime_master"], hover["runtime_frames"][2])
+
+    def test_runtime_frame_strip_packs_reviewed_cell_pixels_without_transformation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            master_path = root / "master.png"
+            stretch_path = root / "stretch.png"
+            tilt_path = root / "tilt.png"
+            master = Image.new("RGBA", (24, 24), (0, 0, 0, 0))
+            ImageDraw.Draw(master).ellipse((7, 5, 16, 20), fill=(240, 255, 190, 173))
+            stretch = master.copy()
+            stretch.putpixel((11, 2), (40, 190, 70, 255))
+            tilt = master.copy()
+            tilt.putpixel((18, 14), (55, 200, 80, 255))
+            master.save(master_path)
+            stretch.save(stretch_path)
+            tilt.save(tilt_path)
+            checksum = hashlib.sha256(master_path.read_bytes()).hexdigest()
+            spec = foundry.SpriteSpec(
+                "wisp_hover", master_path, 4, 24, 24, 20, "bottom-center",
+                "runtime_frame_strip", runtime_master=master_path, runtime_master_sha256=checksum,
+                runtime_frame_sources=(master_path, stretch_path, master_path, tilt_path),
+            )
+            cells = foundry.derive_runtime_frame_strip_frames(spec, master_path)
+            sheet = foundry.make_runtime_frame_strip_sheet(cells, spec)
+            self.assertEqual((96, 24), sheet.size)
+            for index, path in enumerate(spec.runtime_frame_sources):
+                with Image.open(path) as source:
+                    expected = source.convert("RGBA").tobytes()
+                self.assertEqual(expected, sheet.crop((index * 24, 0, (index + 1) * 24, 24)).tobytes())
+            self.assertEqual(master_path.read_bytes(), spec.runtime_frame_sources[0].read_bytes())
+            self.assertEqual(master_path.read_bytes(), spec.runtime_frame_sources[2].read_bytes())
+
+    def test_runtime_frame_strip_rejects_wrong_dimensions_and_changed_neutral(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            master_path = root / "master.png"
+            variant_path = root / "variant.png"
+            bad_path = root / "bad.png"
+            Image.new("RGBA", (24, 24), (20, 180, 50, 255)).save(master_path)
+            Image.new("RGBA", (24, 24), (40, 190, 70, 255)).save(variant_path)
+            Image.new("RGBA", (23, 24), (40, 190, 70, 255)).save(bad_path)
+            checksum = hashlib.sha256(master_path.read_bytes()).hexdigest()
+            spec = foundry.SpriteSpec(
+                "wisp_hover", master_path, 4, 24, 24, 20, "bottom-center",
+                "runtime_frame_strip", runtime_master=master_path, runtime_master_sha256=checksum,
+                runtime_frame_sources=(master_path, bad_path, master_path, variant_path),
+            )
+            with self.assertRaisesRegex(foundry.FoundryError, "Runtime frame 2 is"):
+                foundry.derive_runtime_frame_strip_frames(spec, master_path)
+            spec = foundry.SpriteSpec(
+                "wisp_hover", master_path, 4, 24, 24, 20, "bottom-center",
+                "runtime_frame_strip", runtime_master=master_path, runtime_master_sha256=checksum,
+                runtime_frame_sources=(variant_path, variant_path, master_path, variant_path),
+            )
+            with self.assertRaisesRegex(foundry.FoundryError, "Frames 1 and 3"):
+                foundry.derive_runtime_frame_strip_frames(spec, master_path)
 
     def test_manifest_distinguishes_presentation_reference_from_runtime_master(self):
         with tempfile.TemporaryDirectory() as directory:

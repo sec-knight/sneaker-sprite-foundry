@@ -40,6 +40,7 @@ class SpriteSpec:
     region_masks: tuple[tuple[str, Path], ...] = ()
     region_frames: tuple[tuple[tuple[str, tuple[int, int]], ...], ...] = ()
     underlays: tuple[tuple[str, Path, tuple[str, ...]], ...] = ()
+    runtime_frame_sources: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,13 +59,16 @@ def load_spec(manifest_path: Path, asset_name: str, root: Path = ROOT) -> Sprite
     if asset.get("anchor") != "bottom-center":
         raise FoundryError("This foundry slice requires a bottom-center anchor.")
     source_mode = asset.get("source_mode", "strip")
-    if source_mode not in {"strip", "canonical_derived", "runtime_master_derived", "runtime_master_region_derived"}:
+    if source_mode not in {"strip", "canonical_derived", "runtime_master_derived", "runtime_master_region_derived", "runtime_frame_strip"}:
         raise FoundryError(f"Unsupported source mode: {source_mode}.")
     runtime_master = root / asset["runtime_master"] if asset.get("runtime_master") else None
     runtime_candidate = root / asset["runtime_candidate"] if asset.get("runtime_candidate") else None
     presentation_reference = root / asset["presentation_reference"] if asset.get("presentation_reference") else None
-    if source_mode in {"runtime_master_derived", "runtime_master_region_derived"} and runtime_master is None:
+    if source_mode in {"runtime_master_derived", "runtime_master_region_derived", "runtime_frame_strip"} and runtime_master is None:
         raise FoundryError(f"{source_mode} assets must declare runtime_master.")
+    runtime_frame_sources = tuple(root / path for path in asset.get("runtime_frames", ()))
+    if source_mode == "runtime_frame_strip" and len(runtime_frame_sources) != int(asset["frames"]):
+        raise FoundryError("runtime_frame_strip assets must declare one runtime_frames path per frame.")
     motion = asset.get("motion", {})
     regions = tuple((name, root / path) for name, path in motion.get("regions", {}).items())
     region_frames = tuple(tuple((name, tuple(offset)) for name, offset in frame.items()) for frame in motion.get("frames", ()))
@@ -87,6 +91,7 @@ def load_spec(manifest_path: Path, asset_name: str, root: Path = ROOT) -> Sprite
         region_masks=regions,
         region_frames=region_frames,
         underlays=underlays,
+        runtime_frame_sources=runtime_frame_sources,
     )
 
 
@@ -358,6 +363,35 @@ def derive_runtime_master_frames(source: Image.Image, spec: SpriteSpec) -> list[
     return [_translate_cell(master, offset, spec) for offset in spec.motion_offsets]
 
 
+def derive_runtime_frame_strip_frames(spec: SpriteSpec, master_path: Path) -> list[Image.Image]:
+    """Load reviewed runtime cells exactly as authored, without any pixel transformation."""
+    if len(spec.runtime_frame_sources) != spec.frames:
+        raise FoundryError("runtime_frame_strip must provide exactly one source path per declared frame.")
+    if spec.runtime_master_sha256 is None:
+        raise FoundryError("runtime_frame_strip assets must declare runtime_master_sha256.")
+    if hashlib.sha256(master_path.read_bytes()).hexdigest() != spec.runtime_master_sha256.lower():
+        raise FoundryError("Approved runtime-master checksum does not match the manifest.")
+    master_bytes = master_path.read_bytes()
+    cells: list[Image.Image] = []
+    source_pixel_bytes: list[bytes] = []
+    for index, path in enumerate(spec.runtime_frame_sources, start=1):
+        if not path.exists():
+            raise FoundryError(f"Runtime frame {index} is missing: {path}.")
+        with Image.open(path) as source:
+            if source.size != (spec.cell_width, spec.cell_height):
+                raise FoundryError(
+                    f"Runtime frame {index} is {source.size}, expected {(spec.cell_width, spec.cell_height)}."
+                )
+            cell = source.convert("RGBA")
+        cells.append(cell)
+        source_pixel_bytes.append(cell.tobytes())
+    if spec.runtime_frame_sources[0].read_bytes() != master_bytes or spec.runtime_frame_sources[2].read_bytes() != master_bytes:
+        raise FoundryError("Frames 1 and 3 of runtime_frame_strip must be byte-identical to the approved runtime master.")
+    if source_pixel_bytes[0] != source_pixel_bytes[2]:
+        raise FoundryError("Frames 1 and 3 of runtime_frame_strip do not preserve identical runtime pixels.")
+    return cells
+
+
 def _load_binary_mask(path: Path, spec: SpriteSpec, master: Image.Image) -> Image.Image:
     if not path.exists():
         raise FoundryError(f"Region mask is missing: {path}.")
@@ -493,6 +527,18 @@ def make_sheet(cells: list[Image.Image], spec: SpriteSpec) -> Image.Image:
     return sheet
 
 
+def make_runtime_frame_strip_sheet(cells: list[Image.Image], spec: SpriteSpec) -> Image.Image:
+    """Pack reviewed cells by direct pixel copy; alpha compositing is intentionally forbidden."""
+    if len(cells) != spec.frames:
+        raise FoundryError(f"Expected {spec.frames} runtime cells, received {len(cells)}.")
+    sheet = Image.new("RGBA", (spec.cell_width * spec.frames, spec.cell_height), (0, 0, 0, 0))
+    for index, cell in enumerate(cells):
+        if cell.size != (spec.cell_width, spec.cell_height):
+            raise FoundryError(f"Runtime frame {index + 1} has wrong dimensions.")
+        sheet.paste(cell, (index * spec.cell_width, 0))
+    return sheet
+
+
 def validate(cells: list[Image.Image], sheet: Image.Image, spec: SpriteSpec) -> ValidationReport:
     reasons: list[str] = []
     if len(cells) != spec.frames:
@@ -563,11 +609,14 @@ def run(asset_name: str, root: Path = ROOT) -> ValidationReport:
         elif spec.source_mode == "runtime_master_region_derived":
             cells, warnings = derive_runtime_master_region_frames(source_file, spec, spec.source)
             prepared = None
+        elif spec.source_mode == "runtime_frame_strip":
+            cells = derive_runtime_frame_strip_frames(spec, spec.source)
+            prepared = None
         else:
             frames = extract_frames(source_file, spec.frames)
             cells = normalize_frames(frames, spec)
             prepared = None
-    sheet = make_sheet(cells, spec)
+    sheet = make_runtime_frame_strip_sheet(cells, spec) if spec.source_mode == "runtime_frame_strip" else make_sheet(cells, spec)
     report = validate(cells, sheet, spec)
     if not report.passed:
         raise FoundryError("Validation failed: " + "; ".join(report.reasons))
