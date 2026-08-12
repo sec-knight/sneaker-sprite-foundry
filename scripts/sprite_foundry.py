@@ -39,6 +39,7 @@ class SpriteSpec:
     runtime_master_sha256: str | None = None
     region_masks: tuple[tuple[str, Path], ...] = ()
     region_frames: tuple[tuple[tuple[str, tuple[int, int]], ...], ...] = ()
+    underlays: tuple[tuple[str, Path, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,8 @@ def load_spec(manifest_path: Path, asset_name: str, root: Path = ROOT) -> Sprite
     motion = asset.get("motion", {})
     regions = tuple((name, root / path) for name, path in motion.get("regions", {}).items())
     region_frames = tuple(tuple((name, tuple(offset)) for name, offset in frame.items()) for frame in motion.get("frames", ()))
+    underlays = tuple((name, root / underlay["source"], tuple(underlay.get("expose_when", ())) )
+                      for name, underlay in motion.get("underlays", {}).items())
     return SpriteSpec(
         name=asset_name,
         source=runtime_master if runtime_master is not None else root / asset["source"],
@@ -83,6 +86,7 @@ def load_spec(manifest_path: Path, asset_name: str, root: Path = ROOT) -> Sprite
         runtime_master_sha256=asset.get("runtime_master_sha256"),
         region_masks=regions,
         region_frames=region_frames,
+        underlays=underlays,
     )
 
 
@@ -400,6 +404,32 @@ def _blit_masked_region(destination: Image.Image, master: Image.Image, mask: Ima
     destination.paste(Image.frombytes("RGBA", destination.size, bytes(destination_data)))
 
 
+def _load_underlay(path: Path, spec: SpriteSpec, master: Image.Image) -> Image.Image:
+    if not path.exists():
+        raise FoundryError(f"Underlay is missing: {path}.")
+    with Image.open(path) as source:
+        underlay = source.convert("RGBA")
+    if underlay.size != (spec.cell_width, spec.cell_height):
+        raise FoundryError(f"Underlay {path} is {underlay.size}, expected {(spec.cell_width, spec.cell_height)}.")
+    master_pixels = set(master.get_flattened_data())
+    if any(pixel not in master_pixels for pixel in underlay.get_flattened_data() if pixel[3]):
+        raise FoundryError(f"Underlay {path} contains pixels not present in the approved runtime master.")
+    return underlay
+
+
+def _mask_from_alpha(image: Image.Image) -> Image.Image:
+    return image.getchannel("A").point(lambda value: 255 if value else 0)
+
+
+def _inverse_union_mask(masks: list[Image.Image], size: tuple[int, int]) -> Image.Image:
+    data = bytearray([255] * (size[0] * size[1]))
+    for mask in masks:
+        for index, selected in enumerate(mask.get_flattened_data()):
+            if selected:
+                data[index] = 0
+    return Image.frombytes("L", size, bytes(data))
+
+
 def derive_runtime_master_region_frames(source: Image.Image, spec: SpriteSpec, master_path: Path) -> tuple[list[Image.Image], tuple[str, ...]]:
     """Move reviewed master regions by integer pixels; compositing follows manifest region order."""
     if source.size != (spec.cell_width, spec.cell_height):
@@ -418,6 +448,8 @@ def derive_runtime_master_region_frames(source: Image.Image, spec: SpriteSpec, m
     if not masks:
         raise FoundryError("Region animation must declare at least one mask.")
     warnings: list[str] = []
+    underlays = {name: (_load_underlay(path, spec, master), expose_when)
+                 for name, path, expose_when in spec.underlays}
     for left_name, left_mask in masks.items():
         for right_name, right_mask in masks.items():
             if left_name < right_name and any(a and b for a, b in zip(left_mask.get_flattened_data(), right_mask.get_flattened_data(), strict=True)):
@@ -434,9 +466,20 @@ def derive_runtime_master_region_frames(source: Image.Image, spec: SpriteSpec, m
                 raise FoundryError("Region transforms must be [integer_x, integer_y].")
             if offset != (0, 0):
                 selected.append((name, offset))
-        frame = master.copy()
-        for name, _ in selected:
-            _clear_mask(frame, masks[name])
+        selected_names = {name for name, _ in selected}
+        selected_masks = [masks[name] for name in selected_names]
+        frame = Image.new("RGBA", master.size, (0, 0, 0, 0))
+        for underlay, expose_when in underlays.values():
+            if set(expose_when) <= selected_names:
+                underlay_mask = _mask_from_alpha(underlay)
+                if not expose_when or any(region not in masks for region in expose_when):
+                    raise FoundryError("Underlay must name one or more declared triggering regions.")
+                triggering_masks = [masks[region] for region in expose_when]
+                if any(value and not any(mask.get_flattened_data()[index] for mask in triggering_masks)
+                       for index, value in enumerate(underlay_mask.get_flattened_data())):
+                    raise FoundryError("Underlay pixels may only occupy source pixels vacated by their triggering region.")
+                _blit_masked_region(frame, underlay, underlay_mask, 0, 0)
+        _blit_masked_region(frame, master, _inverse_union_mask(selected_masks, master.size), 0, 0)
         for name, (offset_x, offset_y) in selected:
             _blit_masked_region(frame, master, masks[name], offset_x, offset_y)
         frames.append(frame)

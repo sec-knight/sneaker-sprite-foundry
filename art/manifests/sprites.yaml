@@ -14,6 +14,10 @@ assets:
         left_antler_foliage: art/masks/guardian/left_antler_foliage.png
         right_antler_foliage: art/masks/guardian/right_antler_foliage.png
         cloak_hem: art/masks/guardian/cloak_hem.png
+      underlays:
+        body_gap:
+          source: art/underlays/guardian/body_gap.png
+          expose_when: [body]
       frames:
         - {}
         - body: [0, -1]

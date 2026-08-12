@@ -140,6 +140,40 @@ class SpriteFoundryTests(unittest.TestCase):
             with self.assertRaisesRegex(foundry.FoundryError, "binary"):
                 foundry.derive_runtime_master_region_frames(master, spec, master_path)
 
+    def test_region_underlay_is_hidden_in_neutral_and_only_fills_body_vacancy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            master_path = root / "master.png"
+            master = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(master)
+            draw.rectangle((20, 10, 43, 43), fill=(30, 100, 60, 255))
+            draw.rectangle((20, 44, 43, 63), fill=(120, 70, 30, 255))
+            master.save(master_path)
+            mask = Image.new("L", (64, 64))
+            ImageDraw.Draw(mask).rectangle((20, 10, 43, 43), fill=255)
+            mask_path = root / "body.png"
+            mask.save(mask_path)
+            underlay = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            for x in range(20, 44):
+                underlay.putpixel((x, 43), master.getpixel((x, 44)))
+            underlay_path = root / "underlay.png"
+            underlay.save(underlay_path)
+            spec = foundry.SpriteSpec(
+                "guardian_idle", master_path, 4, 64, 64, 60, "bottom-center",
+                "runtime_master_region_derived", (), None, None, master_path,
+                hashlib.sha256(master_path.read_bytes()).hexdigest(), (("body", mask_path),),
+                ((), (("body", (0, -1)),), (), ()), (("body_gap", underlay_path, ("body",)),),
+            )
+            cells, _ = foundry.derive_runtime_master_region_frames(master, spec, master_path)
+            self.assertEqual(master.tobytes(), cells[0].tobytes())
+            self.assertEqual((120, 70, 30, 255), cells[1].getpixel((20, 43)))
+            self.assertEqual((30, 100, 60, 255), cells[1].getpixel((20, 9)))
+            bad = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            bad.putpixel((1, 1), (255, 0, 255, 255))
+            bad.save(underlay_path)
+            with self.assertRaisesRegex(foundry.FoundryError, "not present"):
+                foundry.derive_runtime_master_region_frames(master, spec, master_path)
+
     def test_runtime_candidate_preparation_is_review_only_and_bottom_centered(self):
         candidate = Image.new("RGBA", (160, 240), (4, 3, 1, 0))
         draw = ImageDraw.Draw(candidate)
