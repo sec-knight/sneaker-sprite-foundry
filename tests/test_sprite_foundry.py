@@ -29,6 +29,17 @@ class SpriteFoundryTests(unittest.TestCase):
         with self.assertRaisesRegex(foundry.FoundryError, "Expected 5"):
             foundry.extract_frames(self.source_strip(), 5)
 
+    def test_extracts_equally_slotted_opaque_reference_export(self):
+        image = Image.new("RGB", (80, 40), (90, 90, 90))
+        draw = ImageDraw.Draw(image)
+        for index in range(4):
+            left = index * 20
+            draw.rectangle((left + 6, 10, left + 13, 31), fill=(30, 100, 60))
+        frames = foundry.extract_frames(image, 4)
+        self.assertEqual(4, len(frames))
+        self.assertEqual((8, 22), frames[0].size)
+        self.assertEqual((30, 100, 60, 255), frames[0].getpixel((0, 0)))
+
     def test_shared_scale_and_bottom_center_placement(self):
         cells = foundry.normalize_frames(foundry.extract_frames(self.source_strip(), 4), self.spec)
         boxes = [foundry.alpha_bbox(cell) for cell in cells]

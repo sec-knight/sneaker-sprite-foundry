@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -76,9 +77,24 @@ def _runs(values: Iterable[bool]) -> list[tuple[int, int]]:
 
 
 def extract_frames(source: Image.Image, expected_frames: int) -> list[Image.Image]:
-    """Split a transparent horizontal source strip at fully transparent columns."""
+    """Split transparent strips or equally-slotted opaque reference exports."""
     source = source.convert("RGBA")
     alpha = source.getchannel("A")
+    if alpha.getextrema()[0] == 255:
+        if source.width % expected_frames:
+            raise FoundryError(
+                f"Opaque source width {source.width} cannot be divided into {expected_frames} equal frame slots."
+            )
+        slot_width = source.width // expected_frames
+        frames: list[Image.Image] = []
+        for index in range(expected_frames):
+            slot = source.crop((index * slot_width, 0, (index + 1) * slot_width, source.height))
+            foreground = _remove_edge_connected_background(slot)
+            bounds = alpha_bbox(foreground)
+            if bounds is None:  # Guarded in _remove_edge_connected_background; keeps type narrowing explicit.
+                raise FoundryError("Opaque source slot contains no foreground after background removal.")
+            frames.append(foreground.crop(bounds))
+        return frames
     occupied_columns = [alpha.crop((x, 0, x + 1, source.height)).getbbox() is not None
                         for x in range(source.width)]
     columns = _runs(occupied_columns)
@@ -95,6 +111,57 @@ def extract_frames(source: Image.Image, expected_frames: int) -> list[Image.Imag
             raise FoundryError("A source frame has no visible pixels.")
         frames.append(frame.crop(bbox))
     return frames
+
+
+def _remove_edge_connected_background(image: Image.Image, tolerance: int = 16) -> Image.Image:
+    """Make a baked checkerboard/flat background transparent without touching enclosed art.
+
+    Only pixels connected to a frame edge through small colour changes are removed.  This
+    intentionally rejects opaque artwork that touches an edge rather than guessing at its
+    silhouette, while accepting the equally-slotted reference exports used by this foundry.
+    """
+    image = image.convert("RGBA")
+    width, height = image.size
+    pixels = image.load()
+    background = bytearray(width * height)
+    pending: deque[tuple[int, int]] = deque()
+
+    def add(x: int, y: int) -> None:
+        index = y * width + x
+        if not background[index]:
+            background[index] = 1
+            pending.append((x, y))
+
+    for x in range(width):
+        add(x, 0)
+        add(x, height - 1)
+    for y in range(1, height - 1):
+        add(0, y)
+        add(width - 1, y)
+
+    while pending:
+        x, y = pending.popleft()
+        red, green, blue, _ = pixels[x, y]
+        for next_x, next_y in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if not (0 <= next_x < width and 0 <= next_y < height):
+                continue
+            index = next_y * width + next_x
+            if background[index]:
+                continue
+            next_pixel = pixels[next_x, next_y]
+            if max(abs(next_pixel[0] - red), abs(next_pixel[1] - green), abs(next_pixel[2] - blue)) <= tolerance:
+                background[index] = 1
+                pending.append((next_x, next_y))
+
+    alpha = image.getchannel("A")
+    alpha_data = bytearray(alpha.tobytes())
+    for index, is_background in enumerate(background):
+        if is_background:
+            alpha_data[index] = 0
+    image.putalpha(Image.frombytes("L", image.size, bytes(alpha_data)))
+    if alpha_bbox(image) is None:
+        raise FoundryError("Opaque source slot contains no foreground after background removal.")
+    return image
 
 
 def normalize_frames(frames: list[Image.Image], spec: SpriteSpec) -> list[Image.Image]:
