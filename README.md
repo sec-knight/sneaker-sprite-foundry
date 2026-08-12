@@ -4,38 +4,43 @@ A tiny production pipeline for turning approved Sneaker Games character concepts
 
 ## First proof
 
-The first and only active work item is `guardian_idle`.
+The first and only active work item is `guardian_idle`. The source strip is external creative input; this repository normalizes it deterministically into four 64×64, bottom-center anchored cells.
 
-Goal: take one source image containing four front-facing Plushy Guardian idle poses and deterministically produce:
+## Run it
 
-- a 4-frame runtime sprite sheet
-- 64×64 cells
-- ~48 px nominal character height
-- bottom-center alignment
-- transparency
-- a human-reviewable preview
-- explicit validation results
+Install the lightweight dependencies once:
 
-## Repository shape
-
-```text
-art/
-  bible/
-  references/
-  manifests/
-  generated/
-    source/
-    normalized/
-    previews/
-scripts/
-tests/
+```sh
+python -m pip install -r requirements.txt
 ```
 
-## Production philosophy
+Place an RGBA image containing exactly four horizontally arranged Guardian idle frames at `art/generated/source/guardian_idle.png`. The frames must be separated by at least one fully transparent column. Then run:
 
-The image model creates coherent source art. The foundry handles boring precision: crop, scale, alignment, export, validation, preview.
+```sh
+make sprite ASSET=guardian_idle
+```
 
-Do not silently repair design drift. If the Guardian suddenly mutates, surface it for human review.
+On systems without `make`, use:
+
+```sh
+python scripts/sprite_foundry.py guardian_idle
+```
+
+Successful output:
+
+- `art/generated/normalized/guardian_idle.png` — 256×64 runtime sheet
+- `art/generated/previews/guardian_idle_preview.png` — 4× nearest-neighbor review sheet
+- `art/generated/previews/guardian_idle.gif` — looping review preview
+
+The command fails before writing output if the source is absent, has the wrong frame count, or cannot meet mechanical validation. It does not judge canonical visual identity; review the previews for mask, antlers, costume, pose, and other art-direction drift.
+
+## Tests
+
+```sh
+make test
+```
+
+Tests use synthetic art and cover manifest loading, source separation, shared-scale normalization, anchoring, alpha, dimensions, validation failures, and missing source handling.
 
 ## Scope guardrail
 
