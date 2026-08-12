@@ -2,16 +2,22 @@ assets:
   guardian_idle:
     status: active
     type: character_animation
-    reference: art/references/guardian/canonical.png
-    source: art/generated/source/guardian_idle.png
+    presentation_reference: art/generated/source/guardian_canonical_front.png
+    runtime_master: art/generated/source/guardian_front_runtime.png
+    source_mode: runtime_master_derived
+    motion:
+      type: rigid_translation
+      offsets_y: [0, -1, 0, 0]
     frames: 4
     facing: front
     runtime_cell: [64, 64]
-    nominal_character_height: 48
+    nominal_character_height: 60
     anchor: bottom-center
     transparent: true
     notes:
       - subtle breathing/bobbing
       - calm neutral expression
-      - tiny natural motion in leaves, antlers, cloak, or staff
+      - deterministic neutral-rise-neutral breathing derived from the reviewed runtime master
+      - presentation reference is identity-only and is never auto-converted into runtime pixels
+      - no staff
       - seamless loop feel

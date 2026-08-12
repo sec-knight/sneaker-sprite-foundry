@@ -40,6 +40,67 @@ class SpriteFoundryTests(unittest.TestCase):
         self.assertEqual((8, 22), frames[0].size)
         self.assertEqual((30, 100, 60, 255), frames[0].getpixel((0, 0)))
 
+    def test_derives_breathing_frames_from_one_canonical_source(self):
+        canonical = Image.new("RGB", (80, 100), (90, 90, 90))
+        draw = ImageDraw.Draw(canonical)
+        draw.rectangle((28, 12, 51, 79), fill=(30, 100, 60))
+        draw.rectangle((34, 88, 45, 96), fill=(0, 0, 0))  # Presentation label: must be removed.
+        derived_spec = foundry.SpriteSpec(
+            "guardian_idle", Path("unused.png"), 4, 64, 64, 48, "bottom-center", "canonical_derived",
+        )
+        cells, prepared = foundry.derive_canonical_frames(canonical, derived_spec)
+        expected_seed = foundry.normalize_frames([prepared], foundry.SpriteSpec(
+            "guardian_idle", Path("unused.png"), 1, 64, 64, 48, "bottom-center", "canonical_derived",
+        ))[0]
+        self.assertEqual(4, len(cells))
+        self.assertEqual(expected_seed.tobytes(), cells[0].tobytes())
+        self.assertEqual(expected_seed.tobytes(), cells[2].tobytes())
+        self.assertEqual((24, 68), prepared.size)
+        self.assertEqual([64, 63, 64, 64], [foundry.alpha_bbox(cell)[3] for cell in cells])
+        self.assertEqual(cells[1].tobytes(), foundry._translate_cell(cells[0], -1, derived_spec).tobytes())
+        self.assertTrue(foundry.validate(cells, foundry.make_sheet(cells, derived_spec), derived_spec).passed)
+
+    def test_canonical_matte_removes_light_fringe_without_removing_cream_foreground(self):
+        background = (230, 220, 200)
+        canonical = Image.new("RGB", (40, 40), background)
+        draw = ImageDraw.Draw(canonical)
+        draw.rectangle((12, 10, 27, 29), fill=(245, 205, 160))  # Cream Guardian mask/body.
+        draw.rectangle((11, 10, 11, 29), fill=(236, 223, 205))  # Matte fringe.
+        draw.rectangle((28, 10, 28, 29), fill=(236, 223, 205))
+        prepared = foundry.prepare_canonical_source(canonical)
+        self.assertEqual((16, 20), prepared.size)
+        self.assertEqual((245, 205, 160, 255), prepared.getpixel((0, 0)))
+        self.assertTrue(all(pixel[3] == 255 for pixel in prepared.get_flattened_data()))
+
+    def test_runtime_master_mode_keeps_reviewed_pixels_and_requires_transparency(self):
+        master = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        ImageDraw.Draw(master).rectangle((12, 4, 51, 63), fill=(30, 100, 60, 255))
+        spec = foundry.SpriteSpec(
+            "guardian_idle", Path("guardian_front_runtime.png"), 4, 64, 64, 60, "bottom-center",
+            "runtime_master_derived", (0, -1, 0, 0), Path("guardian_canonical_front.png"),
+            Path("guardian_front_runtime.png"),
+        )
+        cells = foundry.derive_runtime_master_frames(master, spec)
+        self.assertEqual(master.tobytes(), cells[0].tobytes())
+        self.assertEqual(cells[1].tobytes(), foundry._translate_cell(master, -1, spec).tobytes())
+        self.assertTrue(foundry.validate(cells, foundry.make_sheet(cells, spec), spec).passed)
+        with self.assertRaisesRegex(foundry.FoundryError, "transparent"):
+            foundry.derive_runtime_master_frames(Image.new("RGBA", (64, 64), (1, 2, 3, 255)), spec)
+
+    def test_manifest_distinguishes_presentation_reference_from_runtime_master(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "art/manifests").mkdir(parents=True)
+            (root / "art/manifests/sprites.yaml").write_text(
+                "assets:\n  guardian_idle:\n    presentation_reference: art/generated/source/guardian_canonical_front.png\n    runtime_master: art/generated/source/guardian_front_runtime.png\n    source_mode: runtime_master_derived\n    frames: 4\n    runtime_cell: [64, 64]\n    nominal_character_height: 60\n    anchor: bottom-center\n",
+                encoding="utf-8",
+            )
+            spec = foundry.load_spec(root / "art/manifests/sprites.yaml", "guardian_idle", root)
+            self.assertEqual(root / "art/generated/source/guardian_canonical_front.png", spec.presentation_reference)
+            self.assertEqual(root / "art/generated/source/guardian_front_runtime.png", spec.runtime_master)
+            with self.assertRaisesRegex(foundry.FoundryError, "Reviewed runtime master is missing"):
+                foundry.run("guardian_idle", root)
+
     def test_shared_scale_and_bottom_center_placement(self):
         cells = foundry.normalize_frames(foundry.extract_frames(self.source_strip(), 4), self.spec)
         boxes = [foundry.alpha_bbox(cell) for cell in cells]
